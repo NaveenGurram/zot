@@ -94,11 +94,11 @@ test "delete note" {
     try std.testing.expect(db.deleteNote(id));
 }
 
-test "delete nonexistent note succeeds (no rows affected)" {
+test "delete nonexistent note returns false" {
     try std.testing.expect(db.init());
     defer db.deinit();
 
-    try std.testing.expect(db.deleteNote(999999));
+    try std.testing.expect(!db.deleteNote(999999));
 }
 
 test "update note" {

@@ -83,11 +83,11 @@ pub fn main() void {
             if (db.deleteNote(target_id)) print("Deleted note {d}\n", .{target_id}) else print("Failed\n", .{});
         },
         .update => {
-            const msg = message orelse {
-                print("Usage: zn update <id> -n \"new message\" [...]\n", .{});
+            if (message == null and std.mem.eql(u8, project, "") and std.mem.eql(u8, due_date, "") and !remind) {
+                print("Usage: zot update <id> [-n \"msg\"] [-p project] [-d due] [--remind] [--every hour|day]\n", .{});
                 return;
-            };
-            if (db.updateNote(target_id, msg.ptr, project.ptr, resolved_due, remind, schedule))
+            }
+            if (db.updateNotePartial(target_id, message, project, due_date, remind, schedule))
                 print("Updated note {d}\n", .{target_id})
             else
                 print("Invalid due date (YYYY-MM-DD or YYYY-MM-DD HH:MM) or update failed\n", .{});
@@ -134,8 +134,22 @@ fn zapNote(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const 
     else
         std.fmt.bufPrint(&buf, "{s}", .{msg}) catch return;
 
-    var cmd_buf: [4096]u8 = undefined;
-    const cmd = std.fmt.bufPrintZ(&cmd_buf, "osascript -e 'display notification \"{s}\" with title \"\xf0\x9f\x93\x9d Zot\"'", .{body}) catch return;
+    // Escape single quotes for shell safety
+    var esc_buf: [4096]u8 = undefined;
+    var esc_len: usize = 0;
+    for (body) |ch| {
+        if (ch == '\'') {
+            if (esc_len + 4 > esc_buf.len) return;
+            @memcpy(esc_buf[esc_len..][0..4], "'\\''");
+            esc_len += 4;
+        } else {
+            if (esc_len >= esc_buf.len) return;
+            esc_buf[esc_len] = ch;
+            esc_len += 1;
+        }
+    }
+    var cmd_buf: [8192]u8 = undefined;
+    const cmd = std.fmt.bufPrintZ(&cmd_buf, "osascript -e 'display notification \"{s}\" with title \"\xf0\x9f\x93\x9d Zot\"'", .{esc_buf[0..esc_len]}) catch return;
     _ = c.system(cmd.ptr);
     print("⚡ {s}\n", .{body});
 }

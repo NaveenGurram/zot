@@ -28,7 +28,7 @@ fn bridge(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u
     if (ext_cb) |cb| cb(id, msg, project, due, remind, @intFromEnum(sched));
 }
 
-export fn zn_list(cb: ListCb) void {
+export fn zot_list(cb: ListCb) void {
     ext_cb = cb;
     db.listNotes(&bridge);
     ext_cb = null;
