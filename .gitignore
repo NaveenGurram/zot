@@ -1,0 +1,19 @@
+# Zig
+zig-out/
+zig-cache/
+.zig-cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode
+xcuserdata/
+*.xcworkspace
+
+# Build
+*.dylib
+*.o
+*.a

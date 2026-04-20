@@ -1,0 +1,43 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build release
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          cp zig-out/bin/zot release/
+          cp zig-out/lib/libzot.dylib release/
+          cp include/zot.h release/
+          tar czf zot-macos-arm64.tar.gz -C release .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zot-macos-arm64
+          path: zot-macos-arm64.tar.gz
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zot-macos-arm64.tar.gz
+          generate_release_notes: true
