@@ -1,5 +1,7 @@
 # Zot — A fast, minimal note-taking CLI
 
+*Named after "jot" (as in jot down ideas) — but since it's written in Zig, it became Zot.*
+
 A fast, minimal notes CLI written in Zig. Uses macOS system SQLite for storage and exports a C ABI shared library for Swift app integration.
 
 ## Install
