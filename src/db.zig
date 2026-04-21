@@ -5,12 +5,19 @@ pub const RemindSchedule = enum(u8) { none = 0, every_hour = 1, every_day = 2 };
 
 var db: ?*c.sqlite3 = null;
 
-pub fn init() bool {
-    const home = std.posix.getenv("HOME") orelse "/tmp";
-    var buf: [512]u8 = undefined;
-    const path = std.fmt.bufPrintZ(&buf, "{s}/.zot_notes.db", .{home}) catch return false;
+var path_buf: [512]u8 = undefined;
 
-    if (c.sqlite3_open(path.ptr, &db) != c.SQLITE_OK) return false;
+pub fn init() bool {
+    return initWithPath(null);
+}
+
+pub fn initWithPath(custom_path: ?[*:0]const u8) bool {
+    const path = custom_path orelse blk: {
+        const home = std.posix.getenv("HOME") orelse "/tmp";
+        break :blk (std.fmt.bufPrintZ(&path_buf, "{s}/.zot_notes.db", .{home}) catch return false).ptr;
+    };
+
+    if (c.sqlite3_open(path, &db) != c.SQLITE_OK) return false;
 
     const sql = "CREATE TABLE IF NOT EXISTS notes(" ++
         "id INTEGER PRIMARY KEY AUTOINCREMENT," ++
@@ -18,9 +25,14 @@ pub fn init() bool {
         "project TEXT DEFAULT ''," ++
         "due_date TEXT DEFAULT ''," ++
         "remind INTEGER DEFAULT 0," ++
-        "schedule INTEGER DEFAULT 0)";
+        "schedule INTEGER DEFAULT 0," ++
+        "done INTEGER DEFAULT 0)";
 
-    return c.sqlite3_exec(db, sql, null, null, null) == c.SQLITE_OK;
+    if (c.sqlite3_exec(db, sql, null, null, null) != c.SQLITE_OK) return false;
+
+    // Migrate: add done column if missing
+    _ = c.sqlite3_exec(db, "ALTER TABLE notes ADD COLUMN done INTEGER DEFAULT 0", null, null, null);
+    return true;
 }
 
 pub fn deinit() void {
@@ -68,21 +80,24 @@ pub fn updateNote(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0
     _ = c.sqlite3_bind_int(stmt, 5, @intFromEnum(sched));
     _ = c.sqlite3_bind_int64(stmt, 6, id);
 
-    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
+    return c.sqlite3_step(stmt) == c.SQLITE_DONE and c.sqlite3_changes(db) > 0;
 }
 
-pub fn updateNotePartial(id: i64, msg: ?[:0]const u8, project: [:0]const u8, due_date: [:0]const u8, remind: bool, sched: RemindSchedule) bool {
-    // Resolve due date
+pub fn updateNotePartial(id: i64, msg: ?[:0]const u8, project: ?[:0]const u8, due_date: ?[:0]const u8, remind: ?bool, sched: RemindSchedule) bool {
+    // Resolve due date if provided
     var date_buf: [11]u8 = undefined;
-    const resolved_due: [*:0]const u8 = resolveDueDate(due_date.ptr, &date_buf) orelse due_date.ptr;
-    if (!validateDueDate(resolved_due)) return false;
+    var resolved_due: ?[*:0]const u8 = null;
+    if (due_date) |dd| {
+        resolved_due = resolveDueDate(dd.ptr, &date_buf) orelse dd.ptr;
+        if (!validateDueDate(resolved_due.?)) return false;
+    }
 
     var parts: [6][]const u8 = undefined;
     var count: usize = 0;
     if (msg != null) { parts[count] = "message=?"; count += 1; }
-    if (project.len > 0) { parts[count] = "project=?"; count += 1; }
-    if (std.mem.span(resolved_due).len > 0) { parts[count] = "due_date=?"; count += 1; }
-    if (remind) { parts[count] = "remind=?"; count += 1; parts[count] = "schedule=?"; count += 1; }
+    if (project != null) { parts[count] = "project=?"; count += 1; }
+    if (resolved_due != null) { parts[count] = "due_date=?"; count += 1; }
+    if (remind != null) { parts[count] = "remind=?"; count += 1; parts[count] = "schedule=?"; count += 1; }
     if (count == 0) return false;
 
     var sql_buf: [256]u8 = undefined;
@@ -106,12 +121,13 @@ pub fn updateNotePartial(id: i64, msg: ?[:0]const u8, project: [:0]const u8, due
 
     var bind: c_int = 1;
     if (msg) |m| { _ = c.sqlite3_bind_text(stmt, bind, m.ptr, -1, null); bind += 1; }
-    if (project.len > 0) { _ = c.sqlite3_bind_text(stmt, bind, project.ptr, -1, null); bind += 1; }
-    if (std.mem.span(resolved_due).len > 0) { _ = c.sqlite3_bind_text(stmt, bind, resolved_due, -1, null); bind += 1; }
-    if (remind) { _ = c.sqlite3_bind_int(stmt, bind, 1); bind += 1; _ = c.sqlite3_bind_int(stmt, bind, @intFromEnum(sched)); bind += 1; }
+    if (project) |p| { _ = c.sqlite3_bind_text(stmt, bind, p.ptr, -1, null); bind += 1; }
+    if (resolved_due) |rd| { _ = c.sqlite3_bind_text(stmt, bind, rd, -1, null); bind += 1; }
+    if (remind) |r| { _ = c.sqlite3_bind_int(stmt, bind, @intFromBool(r)); bind += 1; _ = c.sqlite3_bind_int(stmt, bind, @intFromEnum(sched)); bind += 1; }
     _ = c.sqlite3_bind_int64(stmt, bind, id);
 
-    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return false;
+    return c.sqlite3_changes(db) > 0;
 }
 
 pub const ListCallback = *const fn (id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, remind: bool, sched: RemindSchedule) void;
@@ -130,10 +146,11 @@ pub fn validateDueDate(due: [*:0]const u8) bool {
 
     // YYYY-MM-DD
     if (s[4] != '-' or s[7] != '-') return false;
-    _ = std.fmt.parseInt(u16, s[0..4], 10) catch return false;
     const month = std.fmt.parseInt(u8, s[5..7], 10) catch return false;
     const day = std.fmt.parseInt(u8, s[8..10], 10) catch return false;
-    if (month < 1 or month > 12 or day < 1 or day > 31) return false;
+    if (month < 1 or month > 12 or day < 1) return false;
+    const year = std.fmt.parseInt(u16, s[0..4], 10) catch return false;
+    if (day > daysInMonth(year, month)) return false;
 
     if (s.len == 16) {
         // YYYY-MM-DD HH:MM
@@ -158,20 +175,15 @@ fn daysInMonth(y: u16, m: u8) u8 {
 }
 
 fn getToday() struct { year: u16, month: u8, day: u8, weekday: u8 } {
-    const ts = std.time.timestamp();
-    const epoch_secs: std.time.epoch.EpochSeconds = .{ .secs = @intCast(ts) };
-    const epoch_day = epoch_secs.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    // epoch day 0 = 1970-01-01 which was Thursday (4)
-    // dow: 0=Sun,1=Mon..5=Fri,6=Sat
-    const raw_day: i64 = @intCast(epoch_day.day);
-    const dow: u8 = @intCast(@mod(raw_day + 4, 7));
+    var now: time_c.time_t = undefined;
+    _ = time_c.time(&now);
+    const local = time_c.localtime(&now) orelse return .{ .year = 1970, .month = 1, .day = 1, .weekday = 4 };
+    // tm_wday: 0=Sun,1=Mon..6=Sat — matches our convention
     return .{
-        .year = @intCast(year_day.year),
-        .month = @intFromEnum(month_day.month),
-        .day = month_day.day_index + 1,
-        .weekday = dow,
+        .year = @intCast(local.*.tm_year + 1900),
+        .month = @intCast(local.*.tm_mon + 1),
+        .day = @intCast(local.*.tm_mday),
+        .weekday = @intCast(local.*.tm_wday),
     };
 }
 
@@ -259,7 +271,7 @@ pub fn isDueNowOrPast(due: [*:0]const u8) bool {
 
 pub fn listNotes(cb: ListCallback) void {
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE done=0 ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
     defer _ = c.sqlite3_finalize(stmt);
 
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
@@ -274,9 +286,86 @@ pub fn listNotes(cb: ListCallback) void {
     }
 }
 
+pub fn listNotesByProject(project: [*:0]const u8, cb: ListCallback) void {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE done=0 AND project=? ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_text(stmt, 1, project, -1, null);
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        cb(
+            c.sqlite3_column_int64(stmt, 0),
+            colText(stmt, 1),
+            colText(stmt, 2),
+            colText(stmt, 3),
+            c.sqlite3_column_int(stmt, 4) != 0,
+            @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5)))),
+        );
+    }
+}
+
+pub fn listNotesByDue(due_filter: [*:0]const u8, cb: ListCallback) void {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE done=0 AND due_date LIKE ? ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
+    defer _ = c.sqlite3_finalize(stmt);
+    // Match prefix: "2026-04-21" matches "2026-04-21" and "2026-04-21 09:00"
+    var like_buf: [20]u8 = undefined;
+    const s = std.mem.span(due_filter);
+    if (s.len > 16) return;
+    @memcpy(like_buf[0..s.len], s);
+    like_buf[s.len] = '%';
+    like_buf[s.len + 1] = 0;
+    _ = c.sqlite3_bind_text(stmt, 1, @ptrCast(&like_buf), -1, null);
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        cb(
+            c.sqlite3_column_int64(stmt, 0),
+            colText(stmt, 1),
+            colText(stmt, 2),
+            colText(stmt, 3),
+            c.sqlite3_column_int(stmt, 4) != 0,
+            @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5)))),
+        );
+    }
+}
+
+pub fn searchNotes(keyword: [*:0]const u8, cb: ListCallback) void {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE done=0 AND message LIKE ? COLLATE NOCASE ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
+    defer _ = c.sqlite3_finalize(stmt);
+    var like_buf: [256]u8 = undefined;
+    const s = std.mem.span(keyword);
+    if (s.len + 3 > like_buf.len) return;
+    like_buf[0] = '%';
+    @memcpy(like_buf[1..][0..s.len], s);
+    like_buf[s.len + 1] = '%';
+    like_buf[s.len + 2] = 0;
+    _ = c.sqlite3_bind_text(stmt, 1, @ptrCast(&like_buf), -1, null);
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        cb(
+            c.sqlite3_column_int64(stmt, 0),
+            colText(stmt, 1),
+            colText(stmt, 2),
+            colText(stmt, 3),
+            c.sqlite3_column_int(stmt, 4) != 0,
+            @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5)))),
+        );
+    }
+}
+
+pub fn markDone(id: i64) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "UPDATE notes SET done=1 WHERE id=? AND done=0", -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, id);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return false;
+    return c.sqlite3_changes(db) > 0;
+}
+
 pub fn listReminders(cb: ListCallback) void {
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE remind=1 ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule FROM notes WHERE done=0 AND remind=1 ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return;
     defer _ = c.sqlite3_finalize(stmt);
 
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {

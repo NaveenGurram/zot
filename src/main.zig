@@ -1,7 +1,12 @@
 const std = @import("std");
 const db = @import("db.zig");
 const posix = std.posix;
-const c = @cImport(@cInclude("stdlib.h"));
+
+// ANSI color codes
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const RED = "\x1b[31m";
+const RESET = "\x1b[0m";
 
 fn print(comptime fmt: []const u8, args: anytype) void {
     var buf: [4096]u8 = undefined;
@@ -9,37 +14,109 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     _ = posix.write(1, s) catch {};
 }
 
+fn readByte() ?u8 {
+    var buf: [1]u8 = undefined;
+    const n = posix.read(0, &buf) catch return null;
+    if (n == 0) return null;
+    return buf[0];
+}
+
+const HELP =
+    \\
+    \\📝 Zot — A fast, minimal note-taking CLI
+    \\
+    \\Usage: zot [command] [options]
+    \\
+    \\Commands:
+    \\  (default)        Add a new note
+    \\  list [. | name]  List notes (optionally filter by project)
+    \\  list -d <date>   List notes by due date (today/tomorrow/eow/eom/YYYY-MM-DD)
+    \\  search <text>    Search notes by message
+    \\  done <id>        Mark a note as complete
+    \\  delete <id>      Delete a note (asks for confirmation)
+    \\  update <id>      Update a note
+    \\  remind           Show due reminders
+    \\
+    \\Options:
+    \\  -n, --note       Note message (required for add/update)
+    \\  -p, --project    Project name (use "." for current directory)
+    \\  -d, --due        Due date (YYYY-MM-DD, today, tomorrow, eow, eom)
+    \\  --remind         Enable reminders
+    \\  --no-remind      Disable reminders (for update)
+    \\  --every          Reminder frequency: hour or day (implies --remind)
+    \\  -y               Skip confirmation prompts
+    \\  --help           Show this help
+    \\
+    \\Examples:
+    \\  zot -n "buy groceries"
+    \\  zot -n "fix bug" -p . -d tomorrow --every hour
+    \\  zot list .
+    \\  zot list -d today
+    \\  zot search "bug"
+    \\  zot done 3
+    \\  zot update 3 --no-remind
+    \\
+;
+
 pub fn main() void {
     var args = std.process.args();
     _ = args.skip();
 
     var message: ?[:0]const u8 = null;
-    var project: [:0]const u8 = "";
-    var due_date: [:0]const u8 = "";
-    var remind: bool = false;
+    var project: ?[:0]const u8 = null;
+    var due_date: ?[:0]const u8 = null;
+    var remind: ?bool = null;
     var schedule: db.RemindSchedule = .none;
-    var cmd: enum { add, list, delete, update, remind, zap } = .add;
+    var cmd: enum { add, list, delete, update, remind, search, done, help } = .add;
     var target_id: i64 = 0;
+    var list_filter: ?[:0]const u8 = null;
+    var list_due_filter: ?[:0]const u8 = null;
+    var search_term: ?[:0]const u8 = null;
+    var skip_confirm: bool = false;
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
 
     while (args.next()) |arg| {
         if (eql(arg, "-n") or eql(arg, "--note")) {
             message = args.next();
         } else if (eql(arg, "-p") or eql(arg, "--project")) {
-            project = args.next() orelse "";
+            const raw = args.next() orelse "";
+            project = if (eql(raw, ".")) resolveCwd(&cwd_buf) orelse raw else raw;
         } else if (eql(arg, "-d") or eql(arg, "--due")) {
-            due_date = args.next() orelse "";
+            const val = args.next() orelse "";
+            if (cmd == .list)
+                list_due_filter = val
+            else
+                due_date = val;
         } else if (eql(arg, "--remind")) {
             remind = true;
+        } else if (eql(arg, "--no-remind")) {
+            remind = false;
         } else if (eql(arg, "--every")) {
             remind = true;
             const v: []const u8 = args.next() orelse "";
             schedule = if (std.mem.eql(u8, v, "hour")) .every_hour else if (std.mem.eql(u8, v, "day")) .every_day else .none;
+        } else if (eql(arg, "-y")) {
+            skip_confirm = true;
+        } else if (eql(arg, "--help") or eql(arg, "-h")) {
+            cmd = .help;
         } else if (eql(arg, "list")) {
             cmd = .list;
+            if (args.next()) |next| {
+                if (eql(next, "-d") or eql(next, "--due")) {
+                    list_due_filter = args.next();
+                } else if (next.len > 0 and next[0] != '-') {
+                    list_filter = if (eql(next, ".")) resolveCwd(&cwd_buf) orelse "." else next;
+                }
+            }
+        } else if (eql(arg, "search")) {
+            cmd = .search;
+            search_term = args.next();
+        } else if (eql(arg, "done")) {
+            cmd = .done;
+            const v: []const u8 = args.next() orelse "0";
+            target_id = std.fmt.parseInt(i64, v, 10) catch 0;
         } else if (eql(arg, "remind")) {
             cmd = .remind;
-        } else if (eql(arg, "zap")) {
-            cmd = .zap;
         } else if (eql(arg, "delete")) {
             cmd = .delete;
             const v: []const u8 = args.next() orelse "0";
@@ -51,6 +128,11 @@ pub fn main() void {
         }
     }
 
+    if (cmd == .help) {
+        print(HELP, .{});
+        return;
+    }
+
     if (!db.init()) {
         print("Failed to init database\n", .{});
         return;
@@ -59,15 +141,17 @@ pub fn main() void {
 
     // Resolve special date strings
     var date_buf: [11]u8 = undefined;
-    const resolved_due: [*:0]const u8 = db.resolveDueDate(due_date.ptr, &date_buf) orelse due_date.ptr;
+    const raw_due: [:0]const u8 = due_date orelse "";
+    const resolved_due: [*:0]const u8 = db.resolveDueDate(raw_due.ptr, &date_buf) orelse raw_due.ptr;
 
     switch (cmd) {
+        .help => unreachable,
         .add => {
             const msg = message orelse {
-                print("Usage: zot -n \"note\" [-p project] [-d due_date] [--remind] [--every hour|day]\n", .{});
+                print("Usage: zot -n \"note\" [-p project] [-d due] [--remind] [--every hour|day]\nTry: zot --help\n", .{});
                 return;
             };
-            const id = db.addNote(msg.ptr, project.ptr, resolved_due, remind, schedule);
+            const id = db.addNote(msg.ptr, (project orelse "").ptr, resolved_due, remind orelse false, schedule);
             if (id == -2) {
                 print("Invalid due date. Format: YYYY-MM-DD or YYYY-MM-DD HH:MM (09:00-17:00)\n", .{});
             } else if (id > 0) {
@@ -76,15 +160,66 @@ pub fn main() void {
                 print("Failed to add note\n", .{});
             }
         },
-        .list => db.listNotes(&printNote),
-        .remind => db.listReminders(&printReminder),
-        .zap => db.listReminders(&zapNote),
+        .list => {
+            list_count = 0;
+            print("\n" ++ BOLD ++ "\xf0\x9f\x93\x8b Zot Notes" ++ RESET, .{});
+            if (list_filter) |f| print(" " ++ DIM ++ "[{s}]" ++ RESET, .{f});
+            var due_dbuf: [11]u8 = undefined;
+            const resolved_due_filter: ?[*:0]const u8 = if (list_due_filter) |d| (db.resolveDueDate(d.ptr, &due_dbuf) orelse d.ptr) else null;
+            if (resolved_due_filter) |rd| print(" " ++ DIM ++ "[due: {s}]" ++ RESET, .{rd});
+            print("\n" ++ DIM ++ "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80" ++ RESET ++ "\n", .{});
+            if (resolved_due_filter) |rd| {
+                db.listNotesByDue(rd, &printNote);
+            } else if (list_filter) |f| {
+                db.listNotesByProject(f.ptr, &printNote);
+            } else {
+                db.listNotes(&printNote);
+            }
+            if (list_count == 0)
+                print("  No notes found.\n", .{});
+            print("\n", .{});
+        },
+        .search => {
+            const term = search_term orelse {
+                print("Usage: zot search \"keyword\"\n", .{});
+                return;
+            };
+            list_count = 0;
+            print("\n" ++ BOLD ++ "\xf0\x9f\x94\x8d Search: \"{s}\"" ++ RESET ++ "\n" ++ DIM ++ "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80" ++ RESET ++ "\n", .{term});
+            db.searchNotes(term.ptr, &printNote);
+            if (list_count == 0)
+                print("  No matches found.\n", .{});
+            print("\n", .{});
+        },
+        .done => {
+            if (target_id == 0) { print("Usage: zot done <id>\n", .{}); return; }
+            if (db.markDone(target_id))
+                print("\xe2\x9c\x93 Note #{d} marked done\n", .{target_id})
+            else
+                print("Failed — note not found\n", .{});
+        },
+        .remind => {
+            remind_count = 0;
+            print("\n" ++ BOLD ++ "\xf0\x9f\x94\x94 Zot Reminders" ++ RESET ++ "\n" ++ DIM ++ "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80" ++ RESET ++ "\n", .{});
+            db.listReminders(&printReminder);
+            if (remind_count == 0)
+                print("  No reminders due.\n", .{})
+            else
+                print(DIM ++ "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80" ++ RESET ++ "\n\xe2\x9a\xa1 {d} reminder{s} due.\n", .{ remind_count, if (remind_count > 1) "s" else "" });
+            print("\n", .{});
+        },
         .delete => {
+            if (target_id == 0) { print("Usage: zot delete <id>\n", .{}); return; }
+            if (!skip_confirm) {
+                print("Delete note #{d}? [y/N] ", .{target_id});
+                const ch = readByte() orelse return;
+                if (ch != 'y' and ch != 'Y') { print("Cancelled.\n", .{}); return; }
+            }
             if (db.deleteNote(target_id)) print("Deleted note {d}\n", .{target_id}) else print("Failed\n", .{});
         },
         .update => {
-            if (message == null and std.mem.eql(u8, project, "") and std.mem.eql(u8, due_date, "") and !remind) {
-                print("Usage: zot update <id> [-n \"msg\"] [-p project] [-d due] [--remind] [--every hour|day]\n", .{});
+            if (message == null and project == null and due_date == null and remind == null) {
+                print("Usage: zot update <id> [-n \"msg\"] [-p project] [-d due] [--remind|--no-remind] [--every hour|day]\n", .{});
                 return;
             }
             if (db.updateNotePartial(target_id, message, project, due_date, remind, schedule))
@@ -95,65 +230,70 @@ pub fn main() void {
     }
 }
 
-fn printNote(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, remind: bool, sched: db.RemindSchedule) void {
-    print("[{d}] {s}", .{ id, msg });
+// Extract last path component for display
+fn shortProject(project: [*:0]const u8) [*:0]const u8 {
     const p: []const u8 = std.mem.span(project);
-    const d: []const u8 = std.mem.span(due);
-    if (p.len > 0) print(" | project: {s}", .{project});
-    if (d.len > 0) print(" | due: {s}", .{due});
-    if (remind) print(" | remind: {s}", .{if (sched == .every_hour) "everyHour" else "everyDay"});
-    print("\n", .{});
+    if (p.len == 0) return project;
+    // If it looks like a path (contains /), show last component
+    if (std.mem.lastIndexOfScalar(u8, p, '/')) |idx| {
+        if (idx + 1 < p.len) return @ptrCast(project + idx + 1);
+    }
+    return project;
 }
+
+var list_count: usize = 0;
+
+fn printNote(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, remind: bool, sched: db.RemindSchedule) void {
+    list_count += 1;
+    const d: []const u8 = std.mem.span(due);
+    const p: []const u8 = std.mem.span(project);
+    const overdue = d.len > 0 and db.isDueNowOrPast(due);
+
+    // Message line: bold, red if overdue
+    if (overdue)
+        print("  " ++ RED ++ BOLD ++ "#{d} {s}" ++ RESET ++ "\n", .{ id, msg })
+    else
+        print("  " ++ BOLD ++ "#{d}" ++ RESET ++ " {s}\n", .{ id, msg });
+
+    // Metadata line: dim
+    if (p.len > 0 or d.len > 0 or remind) {
+        print("     " ++ DIM, .{});
+        var sep = false;
+        if (p.len > 0) { print("\xf0\x9f\x93\x81 {s}", .{shortProject(project)}); sep = true; }
+        if (d.len > 0) {
+            if (sep) print("  ", .{});
+            if (overdue) print(RESET ++ RED ++ "\xf0\x9f\x93\x85 {s}" ++ RESET ++ DIM, .{due}) else print("\xf0\x9f\x93\x85 {s}", .{due});
+            sep = true;
+        }
+        if (remind) { if (sep) print("  ", .{}); print("\xf0\x9f\x94\x94 {s}", .{if (sched == .every_hour) "every hour" else if (sched == .every_day) "every day" else "on"}); }
+        print(RESET ++ "\n", .{});
+    }
+}
+
+var remind_count: usize = 0;
 
 fn printReminder(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, _: bool, _: db.RemindSchedule) void {
-    _ = id;
+    remind_count += 1;
     const p: []const u8 = std.mem.span(project);
     const d: []const u8 = std.mem.span(due);
+    const sp = shortProject(project);
     if (p.len > 0 and d.len > 0) {
-        print("{s} [{s}] - due: {s}\n", .{ msg, project, due });
+        print("  {d}. " ++ BOLD ++ "(#{d}) {s}" ++ RESET ++ DIM ++ " [{s}] - due: " ++ RESET ++ RED ++ "{s}" ++ RESET ++ "\n", .{ remind_count, id, msg, sp, due });
     } else if (p.len > 0) {
-        print("{s} [{s}]\n", .{ msg, project });
+        print("  {d}. " ++ BOLD ++ "(#{d}) {s}" ++ RESET ++ DIM ++ " [{s}]" ++ RESET ++ "\n", .{ remind_count, id, msg, sp });
     } else if (d.len > 0) {
-        print("{s} - due: {s}\n", .{ msg, due });
+        print("  {d}. " ++ BOLD ++ "(#{d}) {s}" ++ RESET ++ " - due: " ++ RED ++ "{s}" ++ RESET ++ "\n", .{ remind_count, id, msg, due });
     } else {
-        print("{s}\n", .{msg});
+        print("  {d}. " ++ BOLD ++ "(#{d}) {s}" ++ RESET ++ "\n", .{ remind_count, id, msg });
     }
-}
-
-fn zapNote(id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, _: bool, _: db.RemindSchedule) void {
-    _ = id;
-    const p: []const u8 = std.mem.span(project);
-    const d: []const u8 = std.mem.span(due);
-    var buf: [2048]u8 = undefined;
-    const body = if (p.len > 0 and d.len > 0)
-        std.fmt.bufPrint(&buf, "{s} [{s}] - due: {s}", .{ msg, project, due }) catch return
-    else if (p.len > 0)
-        std.fmt.bufPrint(&buf, "{s} [{s}]", .{ msg, project }) catch return
-    else if (d.len > 0)
-        std.fmt.bufPrint(&buf, "{s} - due: {s}", .{ msg, due }) catch return
-    else
-        std.fmt.bufPrint(&buf, "{s}", .{msg}) catch return;
-
-    // Escape single quotes for shell safety
-    var esc_buf: [4096]u8 = undefined;
-    var esc_len: usize = 0;
-    for (body) |ch| {
-        if (ch == '\'') {
-            if (esc_len + 4 > esc_buf.len) return;
-            @memcpy(esc_buf[esc_len..][0..4], "'\\''");
-            esc_len += 4;
-        } else {
-            if (esc_len >= esc_buf.len) return;
-            esc_buf[esc_len] = ch;
-            esc_len += 1;
-        }
-    }
-    var cmd_buf: [8192]u8 = undefined;
-    const cmd = std.fmt.bufPrintZ(&cmd_buf, "osascript -e 'display notification \"{s}\" with title \"\xf0\x9f\x93\x9d Zot\"'", .{esc_buf[0..esc_len]}) catch return;
-    _ = c.system(cmd.ptr);
-    print("⚡ {s}\n", .{body});
 }
 
 fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+fn resolveCwd(buf: *[std.fs.max_path_bytes]u8) ?[:0]const u8 {
+    const cwd = std.posix.getcwd(buf) catch return null;
+    buf[cwd.len] = 0;
+    return buf[0..cwd.len :0];
 }

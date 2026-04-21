@@ -1,6 +1,10 @@
 const std = @import("std");
 const db = @import("db.zig");
 
+fn initTestDb() bool {
+    return db.initWithPath(":memory:");
+}
+
 // --- validateDueDate tests ---
 
 test "empty due date is valid" {
@@ -37,6 +41,14 @@ test "invalid month and day" {
     try std.testing.expect(!db.validateDueDate("2026-05-32"));
 }
 
+test "invalid day for month rejected" {
+    try std.testing.expect(!db.validateDueDate("2026-02-31"));
+    try std.testing.expect(!db.validateDueDate("2026-02-29")); // not a leap year
+    try std.testing.expect(!db.validateDueDate("2026-04-31")); // April has 30 days
+    try std.testing.expect(db.validateDueDate("2024-02-29")); // leap year OK
+    try std.testing.expect(db.validateDueDate("2026-02-28")); // Feb 28 OK
+}
+
 test "time outside 9-17 rejected" {
     try std.testing.expect(!db.validateDueDate("2026-05-01 08:00"));
     try std.testing.expect(!db.validateDueDate("2026-05-01 18:00"));
@@ -57,12 +69,12 @@ test "invalid time format" {
 
 test "init and deinit" {
     // Use a temp db for testing
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     db.deinit();
 }
 
 test "add note minimal" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("test note", "", "", false, .none);
@@ -70,7 +82,7 @@ test "add note minimal" {
 }
 
 test "add note with all fields" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("full note", "myproject", "2026-06-15", true, .every_hour);
@@ -78,7 +90,7 @@ test "add note with all fields" {
 }
 
 test "add note with invalid date returns -2" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("bad", "", "not-a-date", false, .none);
@@ -86,7 +98,7 @@ test "add note with invalid date returns -2" {
 }
 
 test "delete note" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("to delete", "", "", false, .none);
@@ -95,14 +107,14 @@ test "delete note" {
 }
 
 test "delete nonexistent note returns false" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     try std.testing.expect(!db.deleteNote(999999));
 }
 
 test "update note" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("original", "", "", false, .none);
@@ -111,7 +123,7 @@ test "update note" {
 }
 
 test "update note with invalid date returns false" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     const id = db.addNote("orig", "", "", false, .none);
@@ -120,7 +132,7 @@ test "update note with invalid date returns false" {
 }
 
 test "list notes calls callback" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     _ = db.addNote("list test", "proj1", "2026-08-01", false, .none);
@@ -132,7 +144,7 @@ test "list notes calls callback" {
 }
 
 test "listReminders only shows remind=true" {
-    try std.testing.expect(db.init());
+    try std.testing.expect(initTestDb());
     defer db.deinit();
 
     _ = db.addNote("no remind", "", "", false, .none);
@@ -213,4 +225,151 @@ test "schedule enum values" {
     try std.testing.expectEqual(@as(u8, 0), @intFromEnum(db.RemindSchedule.none));
     try std.testing.expectEqual(@as(u8, 1), @intFromEnum(db.RemindSchedule.every_hour));
     try std.testing.expectEqual(@as(u8, 2), @intFromEnum(db.RemindSchedule.every_day));
+}
+
+// --- listNotesByProject tests ---
+
+var test_count: usize = 0;
+
+fn countCb(_: i64, _: [*:0]const u8, _: [*:0]const u8, _: [*:0]const u8, _: bool, _: db.RemindSchedule) void {
+    test_count += 1;
+}
+
+test "listNotesByProject filters correctly" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    _ = db.addNote("note1", "alpha", "", false, .none);
+    _ = db.addNote("note2", "alpha", "", false, .none);
+    _ = db.addNote("note3", "beta", "", false, .none);
+    _ = db.addNote("note4", "", "", false, .none);
+
+    test_count = 0;
+    db.listNotesByProject("alpha", &countCb);
+    try std.testing.expectEqual(@as(usize, 2), test_count);
+
+    test_count = 0;
+    db.listNotesByProject("beta", &countCb);
+    try std.testing.expectEqual(@as(usize, 1), test_count);
+
+    test_count = 0;
+    db.listNotesByProject("nonexistent", &countCb);
+    try std.testing.expectEqual(@as(usize, 0), test_count);
+}
+
+// --- updateNotePartial with optionals ---
+
+test "updateNotePartial clears remind" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    const id = db.addNote("reminder note", "", "2026-06-01", true, .every_hour);
+    try std.testing.expect(id > 0);
+    // Set remind to false
+    try std.testing.expect(db.updateNotePartial(id, null, null, null, false, .none));
+}
+
+test "updateNotePartial updates only provided fields" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    const id = db.addNote("orig", "proj", "2026-06-01", false, .none);
+    try std.testing.expect(id > 0);
+    // Update only message
+    try std.testing.expect(db.updateNotePartial(id, "new msg", null, null, null, .none));
+}
+
+test "updateNotePartial with no fields returns false" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    const id = db.addNote("test", "", "", false, .none);
+    try std.testing.expect(id > 0);
+    try std.testing.expect(!db.updateNotePartial(id, null, null, null, null, .none));
+}
+
+// --- markDone tests ---
+
+test "markDone hides note from list" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    const id = db.addNote("will be done", "", "", false, .none);
+    try std.testing.expect(id > 0);
+
+    test_count = 0;
+    db.listNotes(&countCb);
+    const before = test_count;
+
+    try std.testing.expect(db.markDone(id));
+
+    test_count = 0;
+    db.listNotes(&countCb);
+    try std.testing.expectEqual(before - 1, test_count);
+}
+
+test "markDone nonexistent returns false" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+    try std.testing.expect(!db.markDone(999999));
+}
+
+// --- searchNotes tests ---
+
+test "searchNotes finds matching notes" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    _ = db.addNote("fix login bug", "", "", false, .none);
+    _ = db.addNote("buy groceries", "", "", false, .none);
+    _ = db.addNote("fix auth bug", "", "", false, .none);
+
+    test_count = 0;
+    db.searchNotes("bug", &countCb);
+    try std.testing.expectEqual(@as(usize, 2), test_count);
+
+    test_count = 0;
+    db.searchNotes("groceries", &countCb);
+    try std.testing.expectEqual(@as(usize, 1), test_count);
+
+    test_count = 0;
+    db.searchNotes("nonexistent", &countCb);
+    try std.testing.expectEqual(@as(usize, 0), test_count);
+}
+
+test "searchNotes excludes done notes" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    const id = db.addNote("fix something", "", "", false, .none);
+    _ = db.addNote("fix another", "", "", false, .none);
+
+    test_count = 0;
+    db.searchNotes("fix", &countCb);
+    try std.testing.expectEqual(@as(usize, 2), test_count);
+
+    _ = db.markDone(id);
+
+    test_count = 0;
+    db.searchNotes("fix", &countCb);
+    try std.testing.expectEqual(@as(usize, 1), test_count);
+}
+
+// --- listNotesByDue tests ---
+
+test "listNotesByDue filters by date" {
+    try std.testing.expect(initTestDb());
+    defer db.deinit();
+
+    _ = db.addNote("note1", "", "2026-05-01", false, .none);
+    _ = db.addNote("note2", "", "2026-05-01 14:00", false, .none);
+    _ = db.addNote("note3", "", "2026-05-02", false, .none);
+
+    test_count = 0;
+    db.listNotesByDue("2026-05-01", &countCb);
+    try std.testing.expectEqual(@as(usize, 2), test_count); // matches date and date+time
+
+    test_count = 0;
+    db.listNotesByDue("2026-05-02", &countCb);
+    try std.testing.expectEqual(@as(usize, 1), test_count);
 }

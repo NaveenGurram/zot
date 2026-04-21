@@ -33,3 +33,19 @@ export fn zot_list(cb: ListCb) void {
     db.listNotes(&bridge);
     ext_cb = null;
 }
+
+export fn zot_done(id: i64) bool {
+    return db.markDone(id);
+}
+
+export fn zot_search(keyword: [*:0]const u8, cb: ListCb) void {
+    ext_cb = cb;
+    db.searchNotes(keyword, &bridge);
+    ext_cb = null;
+}
+
+export fn zot_list_by_due(due: [*:0]const u8, cb: ListCb) void {
+    ext_cb = cb;
+    db.listNotesByDue(due, &bridge);
+    ext_cb = null;
+}

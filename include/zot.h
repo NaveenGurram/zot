@@ -15,5 +15,8 @@ bool zot_update(int64_t id, const char *message, const char *project, const char
 
 typedef void (*zot_list_callback)(int64_t id, const char *message, const char *project, const char *due_date, bool remind, uint8_t schedule);
 void zot_list(zot_list_callback cb);
+bool zot_done(int64_t id);
+void zot_search(const char *keyword, zot_list_callback cb);
+void zot_list_by_due(const char *due_date, zot_list_callback cb);
 
 #endif

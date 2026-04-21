@@ -3,12 +3,10 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.zot.notify</string>
+    <string>com.zot.remind</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>$(dirname $(which zot))/../scripts/zot-notify.sh</string>
+        <string>/usr/local/bin/zot-remind</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>
@@ -58,9 +56,5 @@
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
     </array>
-    <key>StandardOutPath</key>
-    <string>/tmp/zot-notify.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/zot-notify.err</string>
 </dict>
 </plist>

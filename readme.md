@@ -6,7 +6,7 @@ A fast, minimal notes CLI written in Zig. Uses macOS system SQLite for storage a
 
 ```bash
 # Build
-/path/to/zig build
+zig build
 
 # Binary at zig-out/bin/zot
 # Add to PATH:
@@ -17,28 +17,34 @@ export PATH="$PATH:/path/to/zot/zig-out/bin"
 
 ```bash
 zot -n "your note here" [options]
+zot --help
 ```
-
-### Flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--note` | `-n` | Note message (required for add/update) |
-| `--project` | `-p` | Project name |
-| `--due` | `-d` | Due date |
-| `--remind` | | Enable reminders (boolean flag) |
-| `--every` | | Reminder frequency: `hour` or `day` (implies --remind) |
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
 | *(default)* | Add a new note |
-| `list` | List all notes |
-| `delete <id>` | Delete a note by ID |
-| `update <id>` | Update a note by ID (pass flags to set new values) |
-| `remind` | Print notes with active reminders that are due (stdout only) |
-| `zap` | Fire macOS notifications for all due reminders |
+| `list [. \| name]` | List notes (optionally filter by project) |
+| `list -d <date>` | List notes by due date |
+| `search <text>` | Search notes by message (case-insensitive) |
+| `done <id>` | Mark a note as complete |
+| `delete <id>` | Delete a note (asks for confirmation) |
+| `update <id>` | Update a note by ID |
+| `remind` | Show due reminders |
+
+### Options
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--note` | `-n` | Note message (required for add/update) |
+| `--project` | `-p` | Project name (use `.` for current directory) |
+| `--due` | `-d` | Due date |
+| `--remind` | | Enable reminders |
+| `--no-remind` | | Disable reminders (for update) |
+| `--every` | | Reminder frequency: `hour` or `day` (implies --remind) |
+| `-y` | | Skip confirmation prompts |
+| `--help` | `-h` | Show help |
 
 ## Due Date Formats
 
@@ -48,7 +54,7 @@ zot -n "your note here" [options]
 | `YYYY-MM-DD HH:MM` | `2026-05-01 14:00` | Date with time (09:00–17:00 only) |
 | `today` | | Resolves to today's date |
 | `tomorrow` | | Resolves to tomorrow's date |
-| `eow` | | End of week (last working day, Friday) |
+| `eow` | | End of week (Friday) |
 | `eom` | | End of month (last working day) |
 
 ## Examples
@@ -57,45 +63,57 @@ zot -n "your note here" [options]
 # Add a simple note
 zot -n "buy groceries"
 
-# Add with all options
-zot -n "finish writing blog" -p work -d "2026-05-01" --every hour
+# Add with project (current directory)
+zot -n "fix auth bug" -p .
 
-# Quick due dates
-zot -n "standup prep" -d today --remind
-zot -n "code review" -d tomorrow -p backend
-zot -n "sprint retro" -d eow
-zot -n "monthly report" -d eom --every day
+# Add with due date and reminders
+zot -n "code review" -d tomorrow -p backend --every hour
+zot -n "sprint retro" -d eow --every day
+zot -n "monthly report" -d eom --remind
 
-# List all notes
-zot list
+# List notes
+zot list              # all notes
+zot list .            # notes for current directory
+zot list backend      # notes for "backend" project
+zot list -d today     # notes due today
+zot list -d eow       # notes due end of week
 
-# Update a note
-zot update 3 -n "updated message" -p "new project" -d "2026-06-01"
+# Search
+zot search "bug"
 
-# Delete a note
+# Mark done
+zot done 3
+
+# Update
+zot update 3 -n "updated message" -d "2026-06-01"
+zot update 3 --no-remind
+
+# Delete (with confirmation)
 zot delete 3
+zot delete 3 -y       # skip confirmation
 
-# Show due reminders (text output)
+# Show due reminders
 zot remind
-
-# Fire macOS notifications for due reminders
-zot zap
 ```
 
-## Notifications (launchd)
+## Reminder Popup (launchd)
 
-Zot includes a launchd agent that sends macOS notifications for due reminders every hour, Monday–Friday 9AM–5PM.
+Zot includes a SwiftUI reminder popup (`zot-remind`) that shows due reminders in a native macOS window with checkboxes. Select items and click "✓ Mark Done" to complete them.
+
+A launchd agent runs this popup every hour, Monday–Friday 9AM–5PM. If no reminders are due, nothing happens.
 
 ```bash
-# Install (already done during setup)
-cp scripts/com.zot.notify.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.zot.notify.plist
+# Install
+cp scripts/com.zot.remind.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.zot.remind.plist
 
 # Unload
-launchctl unload ~/Library/LaunchAgents/com.zot.notify.plist
-```
+launchctl unload ~/Library/LaunchAgents/com.zot.remind.plist
 
-The agent runs `scripts/zot-notify.sh` which calls `zot remind` and pipes each line to `osascript display notification`.
+# Build the reminder UI
+swiftc -o zig-out/bin/zot-remind scripts/ZotRemind.swift \
+  -framework SwiftUI -framework AppKit -parse-as-library
+```
 
 ## Swift Integration (C ABI)
 
@@ -110,6 +128,9 @@ int64_t zot_add(const char *message, const char *project, const char *due_date, 
 bool zot_delete(int64_t id);
 bool zot_update(int64_t id, const char *message, const char *project, const char *due_date, bool remind, uint8_t schedule);
 void zot_list(zot_list_callback cb);
+bool zot_done(int64_t id);
+void zot_search(const char *keyword, zot_list_callback cb);
+void zot_list_by_due(const char *due_date, zot_list_callback cb);
 ```
 
 ### Schedule values
@@ -128,6 +149,7 @@ let id = zot_add("my note", "project", "2026-05-01", true, 1)
 zot_list { id, msg, project, due, remind, schedule in
     print("[\(id)] \(String(cString: msg!))")
 }
+zot_done(id)
 zot_deinit()
 ```
 
@@ -138,20 +160,21 @@ Notes are stored in SQLite at `~/.zot_notes.db`. Both the CLI and Swift app shar
 ## Running Tests
 
 ```bash
-/path/to/zig build test
+zig build test
 ```
 
 ## Project Structure
 
 ```
-├── build.zig              # Build config (exe + dylib + tests)
-├── include/zot.h          # C header for Swift bridging
+├── build.zig                # Build config (exe + dylib + tests)
+├── include/zot.h            # C header for Swift bridging
 ├── scripts/
-│   ├── zot-notify.sh      # Notification script
-│   └── com.zot.notify.plist  # launchd agent
+│   ├── ZotRemind.swift      # SwiftUI reminder popup
+│   ├── zot-remind.sh        # Launcher script for launchd
+│   └── com.zot.remind.plist # launchd agent
 └── src/
-    ├── db.zig             # SQLite CRUD + date validation
-    ├── main.zig           # CLI entry point
-    ├── lib.zig            # C ABI exports
-    └── tests.zig          # Unit tests
+    ├── db.zig               # SQLite CRUD, search, date validation
+    ├── main.zig             # CLI entry point + formatted output
+    ├── lib.zig              # C ABI exports
+    └── tests.zig            # Unit tests
 ```
