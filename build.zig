@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    lib.linkSystemLibrary("sqlite3");
+    lib.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(lib);
 
     // CLI executable
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    exe.linkSystemLibrary("sqlite3");
+    exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(exe);
 
     // Tests
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    tests.linkSystemLibrary("sqlite3");
+    tests.root_module.linkSystemLibrary("sqlite3", .{});
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);

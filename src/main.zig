@@ -8,15 +8,17 @@ const DIM = "\x1b[2m";
 const RED = "\x1b[31m";
 const RESET = "\x1b[0m";
 
+var global_io: std.Io = undefined;
+
 fn print(comptime fmt: []const u8, args: anytype) void {
     var buf: [4096]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    _ = posix.write(1, s) catch {};
+    std.Io.File.stdout().writeStreamingAll(global_io, s) catch {};
 }
 
 fn readByte() ?u8 {
     var buf: [1]u8 = undefined;
-    const n = posix.read(0, &buf) catch return null;
+    const n = std.Io.File.stdin().readStreaming(global_io, &.{&buf}) catch return null;
     if (n == 0) return null;
     return buf[0];
 }
@@ -30,7 +32,7 @@ const HELP =
     \\Commands:
     \\  (default)        Add a new note
     \\  list [. | name]  List notes (optionally filter by project)
-    \\  list -d <date>   List notes by due date (today/tomorrow/eow/eom/YYYY-MM-DD)
+    \\  list -d <date>   List notes by due date (today/tomorrow/eow/eom/YYYY-MM-DD/MM/DD/YYYY)
     \\  search <text>    Search notes by message
     \\  done <id>        Mark a note as complete
     \\  delete <id>      Delete a note (asks for confirmation)
@@ -40,7 +42,7 @@ const HELP =
     \\Options:
     \\  -n, --note       Note message (required for add/update)
     \\  -p, --project    Project name (use "." for current directory)
-    \\  -d, --due        Due date (YYYY-MM-DD, today, tomorrow, eow, eom)
+    \\  -d, --due        Due date (YYYY-MM-DD, MM/DD/YYYY, today, tomorrow, eow, eom)
     \\  --remind         Enable reminders
     \\  --no-remind      Disable reminders (for update)
     \\  --every          Reminder frequency: hour or day (implies --remind)
@@ -58,8 +60,9 @@ const HELP =
     \\
 ;
 
-pub fn main() void {
-    var args = std.process.args();
+pub fn main(init: std.process.Init) !void {
+    global_io = init.io;
+    var args = init.minimal.args.iterate();
     _ = args.skip();
 
     var message: ?[:0]const u8 = null;
@@ -79,10 +82,10 @@ pub fn main() void {
         if (eql(arg, "-n") or eql(arg, "--note")) {
             message = args.next();
         } else if (eql(arg, "-p") or eql(arg, "--project")) {
-            const raw = args.next() orelse "";
+            const raw = args.next() orelse @as([:0]const u8, "");
             project = if (eql(raw, ".")) resolveCwd(&cwd_buf) orelse raw else raw;
         } else if (eql(arg, "-d") or eql(arg, "--due")) {
-            const val = args.next() orelse "";
+            const val = args.next() orelse @as([:0]const u8, "");
             if (cmd == .list)
                 list_due_filter = val
             else
@@ -93,7 +96,7 @@ pub fn main() void {
             remind = false;
         } else if (eql(arg, "--every")) {
             remind = true;
-            const v: []const u8 = args.next() orelse "";
+            const v: []const u8 = args.next() orelse @as([:0]const u8, "");
             schedule = if (std.mem.eql(u8, v, "hour")) .every_hour else if (std.mem.eql(u8, v, "day")) .every_day else .none;
         } else if (eql(arg, "-y")) {
             skip_confirm = true;
@@ -141,7 +144,7 @@ pub fn main() void {
 
     // Resolve special date strings
     var date_buf: [11]u8 = undefined;
-    const raw_due: [:0]const u8 = due_date orelse "";
+    const raw_due: [:0]const u8 = due_date orelse @as([:0]const u8, "");
     const resolved_due: [*:0]const u8 = db.resolveDueDate(raw_due.ptr, &date_buf) orelse raw_due.ptr;
 
     switch (cmd) {
@@ -151,7 +154,7 @@ pub fn main() void {
                 print("Usage: zot -n \"note\" [-p project] [-d due] [--remind] [--every hour|day]\nTry: zot --help\n", .{});
                 return;
             };
-            const id = db.addNote(msg.ptr, (project orelse "").ptr, resolved_due, remind orelse false, schedule);
+            const id = db.addNote(msg.ptr, (project orelse @as([:0]const u8, "")).ptr, resolved_due, remind orelse false, schedule);
             if (id == -2) {
                 print("Invalid due date. Format: YYYY-MM-DD or YYYY-MM-DD HH:MM (09:00-17:00)\n", .{});
             } else if (id > 0) {
@@ -293,7 +296,7 @@ fn eql(a: []const u8, b: []const u8) bool {
 }
 
 fn resolveCwd(buf: *[std.fs.max_path_bytes]u8) ?[:0]const u8 {
-    const cwd = std.posix.getcwd(buf) catch return null;
-    buf[cwd.len] = 0;
-    return buf[0..cwd.len :0];
+    const len = std.process.currentPath(global_io, buf) catch return null;
+    buf[len] = 0;
+    return buf[0..len :0];
 }

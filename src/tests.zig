@@ -214,6 +214,13 @@ test "resolveDueDate resolves eom" {
     try std.testing.expect(db.validateDueDate(result.?));
 }
 
+test "resolveDueDate resolves MM/DD/YYYY" {
+    var buf: [11]u8 = undefined;
+    const result = db.resolveDueDate("12/25/2026", &buf);
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("2026-12-25", std.mem.span(result.?));
+}
+
 test "resolveDueDate unknown string returns null" {
     var buf: [11]u8 = undefined;
     try std.testing.expect(db.resolveDueDate("next friday", &buf) == null);

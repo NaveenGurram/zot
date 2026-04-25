@@ -13,7 +13,8 @@ pub fn init() bool {
 
 pub fn initWithPath(custom_path: ?[*:0]const u8) bool {
     const path = custom_path orelse blk: {
-        const home = std.posix.getenv("HOME") orelse "/tmp";
+        const home_ptr = std.c.getenv("HOME");
+        const home = if (home_ptr) |p| std.mem.span(p) else "/tmp";
         break :blk (std.fmt.bufPrintZ(&path_buf, "{s}/.zot_notes.db", .{home}) catch return false).ptr;
     };
 
@@ -230,6 +231,13 @@ pub fn resolveDueDate(due: [*:0]const u8, buf: *[11]u8) ?[*:0]const u8 {
             if (dow == 0) dow = 6 else dow -= 1;
         }
         return fmtDate(buf, today.year, today.month, ld);
+    } else if (s.len == 10 and s[2] == '/' and s[5] == '/') {
+        // Handle MM/DD/YYYY
+        const m = std.fmt.parseInt(u8, s[0..2], 10) catch return null;
+        const d = std.fmt.parseInt(u8, s[3..5], 10) catch return null;
+        const y = std.fmt.parseInt(u16, s[6..10], 10) catch return null;
+        if (m < 1 or m > 12 or d < 1 or d > daysInMonth(y, m)) return null;
+        return fmtDate(buf, y, m, d);
     }
     return null;
 }
