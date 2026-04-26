@@ -7,14 +7,14 @@ var db: ?*c.sqlite3 = null;
 
 var path_buf: [512]u8 = undefined;
 
-pub fn init() bool {
-    return initWithPath(null);
+pub fn init(environ_map: *std.process.Environ.Map) bool {
+    return initWithPath(null, environ_map);
 }
 
-pub fn initWithPath(custom_path: ?[*:0]const u8) bool {
+pub fn initWithPath(custom_path: ?[*:0]const u8, environ_map: *std.process.Environ.Map) bool {
     const path = custom_path orelse blk: {
-        const home_ptr = std.c.getenv("HOME");
-        const home = if (home_ptr) |p| std.mem.span(p) else "/tmp";
+        const home_ptr = environ_map.get("HOME");
+        const home = if (home_ptr) |p| p else "/tmp";
         break :blk (std.fmt.bufPrintZ(&path_buf, "{s}/.zot_notes.db", .{home}) catch return false).ptr;
     };
 
@@ -56,6 +56,22 @@ pub fn addNote(msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, r
 
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return -1;
     return c.sqlite3_last_insert_rowid(db);
+}
+
+pub fn importNote(n: Note) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "INSERT INTO notes(message,project,due_date,remind,schedule,done) VALUES(?,?,?,?,?,?)";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_text(stmt, 1, n.message.ptr, @intCast(n.message.len), null);
+    _ = c.sqlite3_bind_text(stmt, 2, n.project.ptr, @intCast(n.project.len), null);
+    _ = c.sqlite3_bind_text(stmt, 3, n.due_date.ptr, @intCast(n.due_date.len), null);
+    _ = c.sqlite3_bind_int(stmt, 4, @intFromBool(n.remind));
+    _ = c.sqlite3_bind_int(stmt, 5, @intFromEnum(n.schedule));
+    _ = c.sqlite3_bind_int(stmt, 6, @intFromBool(n.done));
+
+    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
 }
 
 pub fn deleteNote(id: i64) bool {
@@ -129,6 +145,45 @@ pub fn updateNotePartial(id: i64, msg: ?[:0]const u8, project: ?[:0]const u8, du
 
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return false;
     return c.sqlite3_changes(db) > 0;
+}
+
+pub const Note = struct {
+    id: i64,
+    message: []const u8,
+    project: []const u8,
+    due_date: []const u8,
+    remind: bool,
+    schedule: RemindSchedule,
+    done: bool,
+};
+
+pub fn listAllNotes(allocator: std.mem.Allocator) ![]Note {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id,message,project,due_date,remind,schedule,done FROM notes ORDER BY id", -1, &stmt, null) != c.SQLITE_OK) return error.SqliteError;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var list = std.ArrayListAligned(Note, null).empty;
+    errdefer {
+        for (list.items) |n| {
+            allocator.free(n.message);
+            allocator.free(n.project);
+            allocator.free(n.due_date);
+        }
+        list.deinit(allocator);
+    }
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        try list.append(allocator, .{
+            .id = c.sqlite3_column_int64(stmt, 0),
+            .message = try allocator.dupe(u8, std.mem.span(colText(stmt, 1))),
+            .project = try allocator.dupe(u8, std.mem.span(colText(stmt, 2))),
+            .due_date = try allocator.dupe(u8, std.mem.span(colText(stmt, 3))),
+            .remind = c.sqlite3_column_int(stmt, 4) != 0,
+            .schedule = @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5)))),
+            .done = c.sqlite3_column_int(stmt, 6) != 0,
+        });
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 pub const ListCallback = *const fn (id: i64, msg: [*:0]const u8, project: [*:0]const u8, due: [*:0]const u8, remind: bool, sched: RemindSchedule) void;

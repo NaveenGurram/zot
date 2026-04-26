@@ -2,7 +2,9 @@ const std = @import("std");
 const db = @import("db.zig");
 
 fn initTestDb() bool {
-    return db.initWithPath(":memory:");
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    return db.initWithPath(":memory:", &env);
 }
 
 // --- validateDueDate tests ---

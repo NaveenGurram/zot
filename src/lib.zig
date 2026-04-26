@@ -1,7 +1,10 @@
+const std = @import("std");
 const db = @import("db.zig");
 
 export fn zot_init() bool {
-    return db.init();
+    var map = std.process.Environ.Map.init(std.heap.c_allocator);
+    defer map.deinit();
+    return db.init(&map);
 }
 
 export fn zot_deinit() void {

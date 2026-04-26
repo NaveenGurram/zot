@@ -44,6 +44,8 @@ zot --help
 | `delete <id>` | Delete a note (asks for confirmation) |
 | `update <id>` | Update a note by ID |
 | `remind` | Show due reminders |
+| `export` | Export all notes to JSON (stdout) |
+| `import <file>` | Import notes from a JSON file |
 
 ### Options
 
@@ -80,37 +82,9 @@ zot -n "buy groceries"
 zot -n "pay rent" -d 05/01/2026
 zot -n "fix bug" -p . -d tomorrow --every hour
 
-# Add with project (current directory)
-zot -n "fix auth bug" -p .
-
-# Add with due date and reminders
-zot -n "code review" -d tomorrow -p backend --every hour
-zot -n "sprint retro" -d eow --every day
-zot -n "monthly report" -d eom --remind
-
-# List notes
-zot list              # all notes
-zot list .            # notes for current directory
-zot list backend      # notes for "backend" project
-zot list -d today     # notes due today
-zot list -d eow       # notes due end of week
-
-# Search
-zot search "bug"
-
-# Mark done
-zot done 3
-
-# Update
-zot update 3 -n "updated message" -d "2026-06-01"
-zot update 3 --no-remind
-
-# Delete (with confirmation)
-zot delete 3
-zot delete 3 -y       # skip confirmation
-
-# Show due reminders
-zot remind
+# Export and Import
+zot export > notes_backup.json
+zot import notes_backup.json
 ```
 
 ## Reminder Popup (launchd)
@@ -152,17 +126,12 @@ void zot_search(const char *keyword, zot_list_callback cb);
 void zot_list_by_due(const char *due_date, zot_list_callback cb);
 ```
 
-### Schedule values
+## Notes & Limitations
 
-| Value | Meaning |
-|-------|---------|
-| `0` | No reminder |
-| `1` | Every hour |
-| `2` | Every day |
-
-## Storage
-
-Notes are stored in SQLite at `~/.zot_notes.db`. Both the CLI and Swift app share the same database.
+- **Text Size**: Note messages can be up to **1GB** in the database. Command-line input is usually limited by the OS to **~256KB**.
+- **Rich Text**: Notes are stored as raw UTF-8. You can manually include ANSI escape codes for terminal styling.
+- **JSON Format**: Exported JSON includes all fields: `id`, `message`, `project`, `due_date`, `remind`, `schedule`, and `done`.
+- **Database**: SQLite data is stored at `~/.zot_notes.db`.
 
 ## Running Tests
 
@@ -181,8 +150,8 @@ zig build test
 │   ├── zot-remind.sh        # Launcher script for launchd
 │   └── com.zot.remind.plist # launchd agent
 └── src/
-    ├── db.zig               # SQLite CRUD, search, date validation
-    ├── main.zig             # CLI entry point + formatted output
+    ├── db.zig               # SQLite CRUD, search, date validation, JSON types
+    ├── main.zig             # CLI entry point, formatted output, export/import
     ├── lib.zig              # C ABI exports
     └── tests.zig            # Unit tests
 ```

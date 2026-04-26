@@ -11,9 +11,8 @@ const RESET = "\x1b[0m";
 var global_io: std.Io = undefined;
 
 fn print(comptime fmt: []const u8, args: anytype) void {
-    var buf: [4096]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    std.Io.File.stdout().writeStreamingAll(global_io, s) catch {};
+    var stdout_writer = std.Io.File.stdout().writerStreaming(global_io, &[_]u8{});
+    stdout_writer.interface.print(fmt, args) catch {};
 }
 
 fn readByte() ?u8 {
@@ -38,6 +37,8 @@ const HELP =
     \\  delete <id>      Delete a note (asks for confirmation)
     \\  update <id>      Update a note
     \\  remind           Show due reminders
+    \\  export           Export all notes to JSON (stdout)
+    \\  import <file>    Import notes from a JSON file
     \\
     \\Options:
     \\  -n, --note       Note message (required for add/update)
@@ -70,11 +71,12 @@ pub fn main(init: std.process.Init) !void {
     var due_date: ?[:0]const u8 = null;
     var remind: ?bool = null;
     var schedule: db.RemindSchedule = .none;
-    var cmd: enum { add, list, delete, update, remind, search, done, help } = .add;
+    var cmd: enum { add, list, delete, update, remind, search, done, help, @"export", @"import" } = .add;
     var target_id: i64 = 0;
     var list_filter: ?[:0]const u8 = null;
     var list_due_filter: ?[:0]const u8 = null;
     var search_term: ?[:0]const u8 = null;
+    var import_file: ?[:0]const u8 = null;
     var skip_confirm: bool = false;
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
 
@@ -128,6 +130,11 @@ pub fn main(init: std.process.Init) !void {
             cmd = .update;
             const v: []const u8 = args.next() orelse "0";
             target_id = std.fmt.parseInt(i64, v, 10) catch 0;
+        } else if (eql(arg, "export")) {
+            cmd = .@"export";
+        } else if (eql(arg, "import")) {
+            cmd = .@"import";
+            import_file = args.next();
         }
     }
 
@@ -136,7 +143,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (!db.init()) {
+    if (!db.init(init.environ_map)) {
         print("Failed to init database\n", .{});
         return;
     }
@@ -229,6 +236,46 @@ pub fn main(init: std.process.Init) !void {
                 print("Updated note {d}\n", .{target_id})
             else
                 print("Invalid due date (YYYY-MM-DD or YYYY-MM-DD HH:MM) or update failed\n", .{});
+        },
+        .@"export" => {
+            const all_notes = db.listAllNotes(init.arena.allocator()) catch {
+                print("Export failed\n", .{});
+                return;
+            };
+            var stdout_writer = std.Io.File.stdout().writerStreaming(global_io, &[_]u8{});
+            std.json.Stringify.value(all_notes, .{ .whitespace = .indent_2 }, &stdout_writer.interface) catch {
+                print("Export failed during JSON stringify\n", .{});
+            };
+            print("\n", .{});
+        },
+        .@"import" => {
+            const path = import_file orelse {
+                print("Usage: zot import <file.json>\n", .{});
+                return;
+            };
+            const file = std.Io.Dir.cwd().openFile(global_io, path, .{}) catch {
+                print("Could not open file: {s}\n", .{path});
+                return;
+            };
+            defer file.close(global_io);
+
+            var file_reader = file.reader(global_io, &[_]u8{});
+            const content = file_reader.interface.allocRemaining(init.arena.allocator(), @enumFromInt(10 * 1024 * 1024)) catch {
+                print("File too large or read failed\n", .{});
+                return;
+            };
+
+            const parsed = std.json.parseFromSlice([]db.Note, init.arena.allocator(), content, .{}) catch {
+                print("Failed to parse JSON\n", .{});
+                return;
+            };
+            defer parsed.deinit();
+
+            var count: usize = 0;
+            for (parsed.value) |n| {
+                if (db.importNote(n)) count += 1;
+            }
+            print("Imported {d} notes\n", .{count});
         },
     }
 }
