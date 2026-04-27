@@ -89,7 +89,7 @@ zot import notes_backup.json
 
 ## Reminder Popup (launchd)
 
-Zot includes a SwiftUI reminder popup (`zot-remind`) that shows due reminders in a native macOS window.
+Zot includes a native reminder system. It tries to use a **SwiftUI popup** (`zot-remind-ui`) for a rich experience, but automatically falls back to a **Native AppleScript Dialog** if the Swift binary is missing or fails to compile.
 
 A launchd agent runs this popup every hour, Monday–Friday 9AM–5PM. If no reminders are due, nothing happens.
 
