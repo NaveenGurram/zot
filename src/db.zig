@@ -433,14 +433,18 @@ pub fn listReminders(cb: ListCallback) void {
 
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
         const due = colText(stmt, 3);
-        if (!isDueNowOrPast(due)) continue;
+        const sched: RemindSchedule = @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5))));
+        
+        // Show if it's due now OR if it has a recurring schedule (always remind)
+        if (!isDueNowOrPast(due) and sched == .none) continue;
+        
         cb(
             c.sqlite3_column_int64(stmt, 0),
             colText(stmt, 1),
             colText(stmt, 2),
             due,
             c.sqlite3_column_int(stmt, 4) != 0,
-            @enumFromInt(@as(u8, @intCast(c.sqlite3_column_int(stmt, 5)))),
+            sched,
         );
     }
 }
