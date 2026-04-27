@@ -14,13 +14,18 @@ zig-out/bin/zot-remind: scripts/ZotRemind.swift
 test:
 	$(ZIG) build test
 
-install: all
+install:
 	install -d $(PREFIX)
+	# Ensure binaries are built (ignore swift failure)
+	-$(ZIG) build
+	-swiftc -o zig-out/bin/zot-remind scripts/ZotRemind.swift -framework SwiftUI -framework AppKit -parse-as-library -O
+	
 	install zig-out/bin/zot $(PREFIX)/zot
+	# Install the launcher script as the main command
+	install scripts/zot-remind.sh $(PREFIX)/zot-remind
+	# Install the Swift UI binary if it was successfully built
 	if [ -f zig-out/bin/zot-remind ]; then \
-		install zig-out/bin/zot-remind $(PREFIX)/zot-remind; \
-	else \
-		install scripts/zot-remind.sh $(PREFIX)/zot-remind; \
+		install zig-out/bin/zot-remind $(PREFIX)/zot-remind-ui; \
 	fi
 	@echo "Installed to $(PREFIX)"
 
