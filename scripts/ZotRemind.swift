@@ -1,4 +1,5 @@
 import SwiftUI
+import Observation
 
 struct Reminder: Identifiable {
     let id: Int
@@ -8,16 +9,17 @@ struct Reminder: Identifiable {
     var checked: Bool = false
 }
 
-class AppState: ObservableObject {
-    @Published var reminders: [Reminder] = []
+@Observable
+class AppState {
+    var reminders: [Reminder] = []
     let zotPath: String
 
     init() {
-        // Find zot binary relative to this binary, or fallback paths
         let selfPath = ProcessInfo.processInfo.arguments[0]
         let binDir = (selfPath as NSString).deletingLastPathComponent
         let candidates = [
             "\(binDir)/zot",
+            "\(NSHomeDirectory())/.local/bin/zot",
             "/usr/local/bin/zot"
         ]
         zotPath = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/local/bin/zot"
@@ -38,7 +40,6 @@ class AppState: ObservableObject {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
 
-        // Parse lines like: "  1. (#65) call dentist [backend] - due: 2026-04-21"
         reminders = output.components(separatedBy: "\n").compactMap { line in
             let clean = line.replacingOccurrences(of: "\u{1b}\\[[0-9;]*m", with: "", options: .regularExpression)
             guard let hashIdx = clean.range(of: "(#") else { return nil }
@@ -74,12 +75,10 @@ class AppState: ObservableObject {
 }
 
 struct ContentView: View {
-    @StateObject var state = AppState()
-    @Environment(\.dismiss) var dismiss
+    @State var state = AppState()
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
                 Text("📝")
                     .font(.title)
@@ -105,24 +104,24 @@ struct ContentView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 2) {
-                        ForEach(Array(state.reminders.enumerated()), id: \.element.id) { idx, item in
+                        ForEach(0..<state.reminders.count, id: \.self) { idx in
                             HStack(spacing: 12) {
-                                Image(systemName: item.checked ? "checkmark.circle.fill" : "circle")
+                                Image(systemName: state.reminders[idx].checked ? "checkmark.circle.fill" : "circle")
                                     .font(.title3)
-                                    .foregroundStyle(item.checked ? .green : .secondary)
+                                    .foregroundStyle(state.reminders[idx].checked ? .green : .secondary)
                                     .onTapGesture { state.reminders[idx].checked.toggle() }
 
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.message)
+                                    Text(state.reminders[idx].message)
                                         .font(.body.weight(.medium))
-                                        .strikethrough(item.checked)
-                                        .foregroundStyle(item.checked ? .secondary : .primary)
+                                        .strikethrough(state.reminders[idx].checked)
+                                        .foregroundStyle(state.reminders[idx].checked ? .secondary : .primary)
                                     HStack(spacing: 8) {
-                                        if !item.project.isEmpty {
-                                            Label(item.project, systemImage: "folder")
+                                        if !state.reminders[idx].project.isEmpty {
+                                            Label(state.reminders[idx].project, systemImage: "folder")
                                         }
-                                        if !item.due.isEmpty {
-                                            Label(item.due, systemImage: "calendar")
+                                        if !state.reminders[idx].due.isEmpty {
+                                            Label(state.reminders[idx].due, systemImage: "calendar")
                                                 .foregroundStyle(.red)
                                         }
                                     }
@@ -130,7 +129,7 @@ struct ContentView: View {
                                     .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Text("#\(item.id)")
+                                Text("#\(state.reminders[idx].id)")
                                     .font(.caption2.monospaced())
                                     .foregroundStyle(.tertiary)
                             }
@@ -144,7 +143,6 @@ struct ContentView: View {
 
             Divider()
 
-            // Footer buttons
             HStack {
                 Button("Dismiss") {
                     NSApplication.shared.terminate(nil)
