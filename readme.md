@@ -7,21 +7,21 @@ A fast, minimal notes CLI written in Zig. Uses macOS system SQLite for storage a
 ## Prerequisites
 
 - **Zig**: 0.16.0 or higher
-- **Swift**: 6.0+ (required for native reminder UI)
 - **SQLite3**: Standard on macOS
 
 ## Install
 
 ### Option 1: Standard Install (requires sudo)
 ```bash
-make
-sudo make install
+zig build -Doptimize=ReleaseSafe
+sudo cp zig-out/bin/zot /usr/local/bin/
 ```
 
 ### Option 2: Local Install (no sudo)
 ```bash
-make
-make install-local
+zig build -Doptimize=ReleaseSafe
+mkdir -p ~/.local/bin
+cp zig-out/bin/zot ~/.local/bin/
 # Ensure ~/.local/bin is in your PATH
 ```
 
@@ -87,27 +87,6 @@ zot export > notes_backup.json
 zot import notes_backup.json
 ```
 
-## Reminder Popup (launchd)
-
-Zot includes a native reminder system. It tries to use a **SwiftUI popup** (`zot-remind-ui`) for a rich experience, but automatically falls back to a **Native AppleScript Dialog** if the Swift binary is missing or fails to compile.
-
-A launchd agent runs this popup every hour, Monday–Friday 9AM–5PM. If no reminders are due, nothing happens.
-
-### Setup Reminders
-```bash
-# After installing the binary:
-make install-agent
-```
-
-### Manage the Agent
-```bash
-# Unload/Disable
-launchctl unload ~/Library/LaunchAgents/com.zot.remind.plist
-
-# Load/Enable
-launchctl load ~/Library/LaunchAgents/com.zot.remind.plist
-```
-
 ## Swift Integration (C ABI)
 
 Zot builds a shared library (`libzot.dylib`) with C-exported functions for use in macOS Swift apps.
@@ -144,14 +123,9 @@ zig build test
 ```
 ├── build.zig                # Build config (exe + dylib + tests)
 ├── include/zot.h            # C header for Swift bridging
-├── Makefile                 # Unified build (zig + swift + install)
-├── scripts/
-│   ├── ZotRemind.swift      # SwiftUI reminder popup
-│   ├── zot-remind.sh        # Launcher script for launchd
-│   └── com.zot.remind.plist # launchd agent
-└── src/
-    ├── db.zig               # SQLite CRUD, search, date validation, JSON types
-    ├── main.zig             # CLI entry point, formatted output, export/import
-    ├── lib.zig              # C ABI exports
+└── src/                     # Zig source code
+    ├── db.zig               # SQLite storage & logic
+    ├── lib.zig              # C ABI shared library exports
+    ├── main.zig             # CLI entry point
     └── tests.zig            # Unit tests
 ```
