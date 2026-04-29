@@ -2,7 +2,7 @@ const std = @import("std");
 const db = @import("db.zig");
 
 export fn zot_init() bool {
-    var map = std.process.Environ.Map.init(std.heap.c_allocator);
+    var map = std.process.getEnvironMap(std.heap.c_allocator) catch return false;
     defer map.deinit();
     return db.init(&map);
 }

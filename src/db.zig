@@ -109,38 +109,49 @@ pub fn updateNotePartial(id: i64, msg: ?[:0]const u8, project: ?[:0]const u8, du
         if (!validateDueDate(resolved_due.?)) return false;
     }
 
-    var parts: [6][]const u8 = undefined;
-    var count: usize = 0;
-    if (msg != null) { parts[count] = "message=?"; count += 1; }
-    if (project != null) { parts[count] = "project=?"; count += 1; }
-    if (resolved_due != null) { parts[count] = "due_date=?"; count += 1; }
-    if (remind != null) { parts[count] = "remind=?"; count += 1; parts[count] = "schedule=?"; count += 1; }
-    if (count == 0) return false;
+    var sql_buf: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&sql_buf);
 
-    var sql_buf: [256]u8 = undefined;
-    var pos: usize = 0;
-    const prefix = "UPDATE notes SET ";
-    @memcpy(sql_buf[pos..][0..prefix.len], prefix);
-    pos += prefix.len;
-    for (parts[0..count], 0..) |part, i| {
-        if (i > 0) { sql_buf[pos] = ','; pos += 1; }
-        @memcpy(sql_buf[pos..][0..part.len], part);
-        pos += part.len;
+    writer.writeAll("UPDATE notes SET ") catch return false;
+
+    var first = true;
+    if (msg != null) { 
+        writer.writeAll("message=?") catch return false; 
+        first = false; 
     }
-    const suffix = " WHERE id=?";
-    @memcpy(sql_buf[pos..][0..suffix.len], suffix);
-    pos += suffix.len;
-    sql_buf[pos] = 0;
+    if (project != null) { 
+        if (!first) writer.writeByte(',') catch return false;
+        writer.writeAll("project=?") catch return false; 
+        first = false; 
+    }
+    if (resolved_due != null) { 
+        if (!first) writer.writeByte(',') catch return false;
+        writer.writeAll("due_date=?") catch return false; 
+        first = false; 
+    }
+    if (remind != null) { 
+        if (!first) writer.writeByte(',') catch return false;
+        writer.writeAll("remind=?,schedule=?") catch return false; 
+        first = false; 
+    }
+    
+    if (first) return false; // No fields to update
+
+    writer.writeAll(" WHERE id=?") catch return false;
+    writer.writeByte(0) catch return false;
 
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db, @ptrCast(&sql_buf), -1, &stmt, null) != c.SQLITE_OK) return false;
+    if (c.sqlite3_prepare_v2(db, @ptrCast(writer.buffered().ptr), -1, &stmt, null) != c.SQLITE_OK) return false;
     defer _ = c.sqlite3_finalize(stmt);
 
     var bind: c_int = 1;
     if (msg) |m| { _ = c.sqlite3_bind_text(stmt, bind, m.ptr, -1, null); bind += 1; }
     if (project) |p| { _ = c.sqlite3_bind_text(stmt, bind, p.ptr, -1, null); bind += 1; }
     if (resolved_due) |rd| { _ = c.sqlite3_bind_text(stmt, bind, rd, -1, null); bind += 1; }
-    if (remind) |r| { _ = c.sqlite3_bind_int(stmt, bind, @intFromBool(r)); bind += 1; _ = c.sqlite3_bind_int(stmt, bind, @intFromEnum(sched)); bind += 1; }
+    if (remind) |r| { 
+        _ = c.sqlite3_bind_int(stmt, bind, @intFromBool(r)); bind += 1; 
+        _ = c.sqlite3_bind_int(stmt, bind, @intFromEnum(sched)); bind += 1; 
+    }
     _ = c.sqlite3_bind_int64(stmt, bind, id);
 
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return false;
@@ -270,17 +281,24 @@ pub fn resolveDueDate(due: [*:0]const u8, buf: *[11]u8) ?[*:0]const u8 {
         return fmtDate(buf, t.year, t.month, t.day);
     } else if (std.mem.eql(u8, s, "eow")) {
         // Last working day of this week (Friday)
-        // weekday: 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
-        const days_to_fri: u8 = if (today.weekday <= 5) 5 - today.weekday else 6; // if Sat, next Fri=6 days
+        // weekday: 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+        var days_to_fri: u8 = 0;
+        if (today.weekday < 5) {
+            days_to_fri = 5 - today.weekday;
+        } else if (today.weekday == 5) {
+            days_to_fri = 7; // Next Friday if today is Friday
+        } else { // Saturday
+            days_to_fri = 6;
+        }
         const t = addDays(today.year, today.month, today.day, days_to_fri);
         return fmtDate(buf, t.year, t.month, t.day);
     } else if (std.mem.eql(u8, s, "eom")) {
         // Last working day of this month
-        const last_day_num = daysInMonth(today.year, today.month);
-        // Calculate weekday of last_day: today.weekday + (last_day - today.day) mod 7
-        const diff: u8 = last_day_num - today.day;
-        var dow: u8 = @intCast(@mod(@as(u16, today.weekday) + diff, 7));
-        var ld: u8 = last_day_num;
+        var ld = daysInMonth(today.year, today.month);
+        // Calculate weekday of the last day of the month
+        const diff = ld - today.day;
+        var dow = (today.weekday + diff) % 7;
+        
         while (dow == 0 or dow == 6) { // Sun or Sat
             ld -= 1;
             if (dow == 0) dow = 6 else dow -= 1;
