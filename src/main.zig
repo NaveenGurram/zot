@@ -1,5 +1,6 @@
 const std = @import("std");
 const db = @import("db.zig");
+const notify = @import("notify.zig");
 const posix = std.posix;
 
 // ANSI color codes
@@ -37,6 +38,9 @@ const HELP =
     \\  delete <id>      Delete a note (asks for confirmation)
     \\  update <id>      Update a note
     \\  remind           Show due reminders
+    \\  notify           Send macOS notifications for due reminders
+    \\  notify --install  Install background scheduler (launchd)
+    \\  notify --uninstall Remove background scheduler
     \\  export           Export all notes to JSON (stdout)
     \\  import <file>    Import notes from a JSON file
     \\
@@ -71,13 +75,15 @@ pub fn main(init: std.process.Init) !void {
     var due_date: ?[:0]const u8 = null;
     var remind: ?bool = null;
     var schedule: db.RemindSchedule = .none;
-    var cmd: enum { add, list, delete, update, remind, search, done, help, @"export", @"import" } = .add;
+    var cmd: enum { add, list, delete, update, remind, search, done, help, @"export", @"import", notify } = .add;
     var target_id: i64 = 0;
     var list_filter: ?[:0]const u8 = null;
     var list_due_filter: ?[:0]const u8 = null;
     var search_term: ?[:0]const u8 = null;
     var import_file: ?[:0]const u8 = null;
     var skip_confirm: bool = false;
+    var notify_install: bool = false;
+    var notify_uninstall: bool = false;
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
 
     while (args.next()) |arg| {
@@ -135,6 +141,13 @@ pub fn main(init: std.process.Init) !void {
         } else if (eql(arg, "import")) {
             cmd = .@"import";
             import_file = args.next();
+        } else if (eql(arg, "notify")) {
+            cmd = .notify;
+            // peek for --install / --uninstall
+            if (args.next()) |sub| {
+                if (eql(sub, "--install")) notify_install = true
+                else if (eql(sub, "--uninstall")) notify_uninstall = true;
+            }
         }
     }
 
@@ -276,6 +289,30 @@ pub fn main(init: std.process.Init) !void {
                 if (db.importNote(n)) count += 1;
             }
             print("Imported {d} notes\n", .{count});
+        },
+        .notify => {
+            if (notify_install) {
+                var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+                const exe_len = std.process.executablePath(global_io, &exe_buf) catch {
+                    print("Could not resolve zot executable path.\n", .{});
+                    return;
+                };
+                if (notify.install(global_io, exe_buf[0..exe_len]))
+                    print("\xe2\x9c\x93 Notification agent installed (runs every 5 minutes)\n  Plist: ~/Library/LaunchAgents/com.zot.notify.plist\n  Logs:  /tmp/zot-notify.log\n", .{})
+                else
+                    print("Failed to install notification agent\n", .{});
+            } else if (notify_uninstall) {
+                if (notify.uninstall(global_io))
+                    print("\xe2\x9c\x93 Notification agent removed\n", .{})
+                else
+                    print("Failed to remove notification agent\n", .{});
+            } else {
+                const count = notify.sendNotifications(global_io);
+                if (count > 0)
+                    print("\xf0\x9f\x94\x94 Sent {d} notification{s}\n", .{ count, if (count > 1) "s" else "" })
+                else
+                    print("No reminders due.\n", .{});
+            }
         },
     }
 }
