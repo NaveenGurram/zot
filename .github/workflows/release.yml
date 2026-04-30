@@ -14,10 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
+      - name: Install Zig 0.16.0
+        run: |
+          curl -L https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz | tar xJ
+          echo "$PWD/zig-aarch64-macos-0.16.0" >> $GITHUB_PATH
+
+      - name: Verify Zig version
+        run: zig version
 
       - name: Run tests
         run: zig build test
