@@ -16,31 +16,27 @@ Opening an app to jot down a quick note is friction. Switching windows, waiting 
 ![Adding a note](assets/screenshots/zot-01.png)
 *Quickly capture ideas with the `-n` flag.*
 
-### 2. Listing active notes
-![Listing notes](assets/screenshots/zot-02.png)
-*View your tasks with the `list` command.*
-
-### 3. Filtering by project
+### 2. Filtering by project
 ![Filtering by project](assets/screenshots/zot-03.png)
 *Scope your view to specific projects.*
 
-### 4. Setting due dates and reminders
+### 3. Setting due dates and reminders
 ![Reminders](assets/screenshots/zot-04.png)
 *Schedule tasks with natural language dates.*
 
-### 5. Native macOS Notifications
+### 4. Native macOS Notifications
 ![macOS Notifications](assets/screenshots/zot-05.png)
 *Get reminded via system notifications.*
 
-### 6. Marking tasks as done
+### 5. Marking tasks as done
 ![Marking done](assets/screenshots/zot-06.png)
 *Keep your list clean by completing tasks.*
 
-### 7. Searching notes
+### 6. Searching notes
 ![Search](assets/screenshots/zot-07.png)
 *Find exactly what you need with full-text search.*
 
-### 8. Exporting and Importing
+### 7. Exporting and Importing
 ![Export Import](assets/screenshots/zot-08.png)
 *Easily backup or migrate your notes via JSON.*
 
