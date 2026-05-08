@@ -12,33 +12,29 @@ Opening an app to jot down a quick note is friction. Switching windows, waiting 
 
 ## Screenshots
 
-### 1. Adding a new note
-![Adding a note](assets/screenshots/zot-01.png)
-*Quickly capture ideas with the `-n` flag.*
+### 1. List of all notes
 
-### 2. Filtering by project
 ![Filtering by project](assets/screenshots/zot-03.png)
-*Scope your view to specific projects.*
 
-### 3. Setting due dates and reminders
+### 2. Pushing notifications on demand
+
 ![Reminders](assets/screenshots/zot-04.png)
-*Schedule tasks with natural language dates.*
 
-### 4. Native macOS Notifications
+### 3. Zot help
+
 ![macOS Notifications](assets/screenshots/zot-05.png)
-*Get reminded via system notifications.*
 
-### 5. Marking tasks as done
+### 4. Uninstalling notifications
+
 ![Marking done](assets/screenshots/zot-06.png)
-*Keep your list clean by completing tasks.*
 
-### 6. Searching notes
+### 5. MacOs Notification Center
+
 ![Search](assets/screenshots/zot-07.png)
-*Find exactly what you need with full-text search.*
 
-### 7. Exporting and Importing
+### 6. Showing reminders
+
 ![Export Import](assets/screenshots/zot-08.png)
-*Easily backup or migrate your notes via JSON.*
 
 ## Prerequisites
 
