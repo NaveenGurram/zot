@@ -1,6 +1,6 @@
 # Zot — A fast, minimal note-taking CLI
 
-*Named after "jot" (as in jot down ideas) — but since it's written in Zig, it became Zot.*
+_Named after "jot" (as in jot down ideas) — but since it's written in Zig, it became Zot._
 
 A CLI-first note-taking tool for macOS, built in Zig. No Electron, no browser tabs, no context switching — just capture ideas and get reminded, all from the terminal.
 
@@ -9,6 +9,25 @@ Zot uses macOS system SQLite for zero-dependency storage, fires native macOS not
 ## Why
 
 Opening an app to jot down a quick note is friction. Switching windows, waiting for load, clicking through UI — it all adds up. Zot keeps you in the terminal where you're already working. Notes go in fast, reminders come to you as native macOS notifications, and the whole thing compiles to a single binary with no runtime dependencies.
+
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/zot-01.png" width="45%" />
+  <img src="assets/screenshots/zot-02.png" width="45%" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/zot-03.png" width="45%" />
+  <img src="assets/screenshots/zot-04.png" width="45%" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/zot-05.png" width="45%" />
+  <img src="assets/screenshots/zot-06.png" width="45%" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/zot-07.png" width="45%" />
+  <img src="assets/screenshots/zot-08.png" width="45%" />
+</p>
 
 ## Prerequisites
 
@@ -41,46 +60,46 @@ zot notify --install                            # enable macOS notifications
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| *(default)* | Add a new note |
-| `list [. \| name]` | List notes (optionally filter by project) |
-| `list -d <date>` | List notes by due date |
-| `search <text>` | Search notes by message (case-insensitive) |
-| `done <id>` | Mark a note as complete |
-| `delete <id>` | Delete a note (asks for confirmation) |
-| `update <id>` | Update a note by ID |
-| `remind` | Show due reminders in terminal |
-| `notify` | Send macOS notifications for due reminders |
-| `notify --install` | Install background notification scheduler |
-| `notify --uninstall` | Remove background notification scheduler |
-| `export` | Export all notes to JSON (stdout) |
-| `import <file>` | Import notes from a JSON file |
+| Command              | Description                                |
+| -------------------- | ------------------------------------------ |
+| _(default)_          | Add a new note                             |
+| `list [. \| name]`   | List notes (optionally filter by project)  |
+| `list -d <date>`     | List notes by due date                     |
+| `search <text>`      | Search notes by message (case-insensitive) |
+| `done <id>`          | Mark a note as complete                    |
+| `delete <id>`        | Delete a note (asks for confirmation)      |
+| `update <id>`        | Update a note by ID                        |
+| `remind`             | Show due reminders in terminal             |
+| `notify`             | Send macOS notifications for due reminders |
+| `notify --install`   | Install background notification scheduler  |
+| `notify --uninstall` | Remove background notification scheduler   |
+| `export`             | Export all notes to JSON (stdout)          |
+| `import <file>`      | Import notes from a JSON file              |
 
 ## Options
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--note` | `-n` | Note message (required for add/update) |
-| `--project` | `-p` | Project name (use `.` for current directory) |
-| `--due` | `-d` | Due date |
-| `--remind` | | Enable reminders |
-| `--no-remind` | | Disable reminders (for update) |
-| `--every` | | Reminder frequency: `hour` or `day` (implies --remind) |
-| `-y` | | Skip confirmation prompts |
-| `--help` | `-h` | Show help |
+| Flag          | Short | Description                                            |
+| ------------- | ----- | ------------------------------------------------------ |
+| `--note`      | `-n`  | Note message (required for add/update)                 |
+| `--project`   | `-p`  | Project name (use `.` for current directory)           |
+| `--due`       | `-d`  | Due date                                               |
+| `--remind`    |       | Enable reminders                                       |
+| `--no-remind` |       | Disable reminders (for update)                         |
+| `--every`     |       | Reminder frequency: `hour` or `day` (implies --remind) |
+| `-y`          |       | Skip confirmation prompts                              |
+| `--help`      | `-h`  | Show help                                              |
 
 ## Due Date Formats
 
-| Format | Example | Description |
-|--------|---------|-------------|
-| `YYYY-MM-DD` | `2026-05-01` | ISO date |
-| `MM/DD/YYYY` | `05/01/2026` | US date |
-| `YYYY-MM-DD HH:MM` | `2026-05-01 14:00` | Date with time (09:00–17:00) |
-| `today` | | Today's date |
-| `tomorrow` | | Tomorrow's date |
-| `eow` | | End of week (Friday) |
-| `eom` | | End of month (last working day) |
+| Format             | Example            | Description                     |
+| ------------------ | ------------------ | ------------------------------- |
+| `YYYY-MM-DD`       | `2026-05-01`       | ISO date                        |
+| `MM/DD/YYYY`       | `05/01/2026`       | US date                         |
+| `YYYY-MM-DD HH:MM` | `2026-05-01 14:00` | Date with time (09:00–17:00)    |
+| `today`            |                    | Today's date                    |
+| `tomorrow`         |                    | Tomorrow's date                 |
+| `eow`              |                    | End of week (Friday)            |
+| `eom`              |                    | End of month (last working day) |
 
 ## macOS Notifications
 
