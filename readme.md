@@ -1,5 +1,11 @@
 # Zot — A fast, minimal note-taking CLI
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+[![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#)
+
+<br />
+
 _Named after "jot" (as in jot down ideas) — but since it's written in Zig, it became Zot._
 
 A CLI-first note-taking tool for macOS, built in Zig. No Electron, no browser tabs, no context switching — just capture ideas and get reminded, all from the terminal.
